@@ -1,170 +1,264 @@
 """
-Tests for Rate Limiting
+Rate Limiting Module
+
+Implements request rate limiting to prevent API abuse.
 """
-from fastapi.testclient import TestClient
-from src.api.main import app
-from src.api.database import Base, engine, SessionLocal
-from src.api import crud
-import pytest
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from fastapi import Request, HTTPException, status
+from typing import Callable
 import time
+from collections import defaultdict
+import redis
+import os
+from src.utils import logger
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 
-# Reset database before tests
-@pytest.fixture(autouse=True)
-def reset_database():
-    """Reset database before each test"""
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+# ==========================================
+# In-Memory Rate Limiter (Simple)
+# ==========================================
 
-@pytest.fixture
-def client():
-    """Create test client"""
-    return TestClient(app)
-
-def test_rate_limit_exceeded(client):
-    """Test that rate limit works on root endpoint"""
-    responses = []
+class InMemoryRateLimiter:
+    """
+    Simple in-memory rate limiter
     
-    # Root endpoint is limited to 2/minute in your code
-    for i in range(5):
-        response = client.get("/")
-        responses.append(response.status_code)
-    
-    # Should get at least one 429 (Too Many Requests)
-    assert 429 in responses, f"Expected 429 in responses, got: {responses}"
+    Good for single-instance deployments
+    """
+    def __init__(self):
+        self.requests = defaultdict(list)
+        self.cleanup_interval = 60
+        self.last_cleanup = time.time()
 
-def test_health_endpoint_has_higher_limit(client):
-    """Test that health endpoint has higher limit (100/minute)"""
-    responses = []
-    
-    # Health endpoint should allow more requests
-    for i in range(10):
-        response = client.get("/health")
-        responses.append(response.status_code)
-    
-    # Should all be 200 since limit is 100/minute
-    assert all(status == 200 for status in responses), f"Expected all 200, got: {responses}"
-
-def test_login_rate_limit(client):
-    """Test login rate limiting (10/minute)"""
-    responses = []
-
-    # Try 15 login attempts
-    for i in range(15):
-        response = client.post(
-            "/auth/token",
-            data={"username": "nonexistent", "password": "wrongpass"}
-        )
-        responses.append(response.status_code)
-
-    # Should get 429 after exceeding limit
-    assert 429 in responses, f"Expected 429 in responses, got: {responses}"
-
-def test_register_rate_limit(client):
-    """Test registration rate limiting (5/hour)"""
-    responses = []
-    db = SessionLocal()
-
-    try:
-        # Try 7 registration attempts (limit is 5/hour)
-        for i in range(7):
-            response = client.post(
-                "/auth/register",
-                json={
-                    "username": f"testuser{i}",
-                    "email": f"user{i}@example.com",
-                    "password": "SecurePass123!",  # Valid password
-                    "full_name": f"Test User {i}"
-                }
-            )
-            responses.append(response.status_code)
+    def is_allowed(
+            self,
+            key: str,
+            max_requests: int,
+            window_second: int 
+    ) -> bool:
+        """
+        Check if request is allowed
+        
+        Args:
+            key: Identifier (e.g., IP address or user ID)
+            max_requests: Maximum requests allowed
+            window_seconds: Time window in seconds
             
-            # Small delay to avoid race conditions
-            time.sleep(0.1)
+        Returns:
+            True if request is allowed
+        """
+        current_time = time.time()
 
-        # Print responses for debugging
-        print(f"Registration responses: {responses}")
-        
-        # Should get 429 after exceeding limit (5 requests)
-        assert 429 in responses, f"Expected 429 in responses, got: {responses}"
-        
-        # First 5 should succeed (201), rest should be rate limited (429)
-        success_count = sum(1 for status in responses if status == 201)
-        rate_limited_count = sum(1 for status in responses if status == 429)
-        
-        assert success_count <= 5, f"Expected max 5 successful registrations, got {success_count}"
-        assert rate_limited_count >= 2, f"Expected at least 2 rate limited responses, got {rate_limited_count}"
-        
-    finally:
-        db.close()
+        if current_time - self.last_cleanup > self.cleanup_interval:
+            self._cleanup_old_entries(current_time)
 
-def test_prediction_rate_limit_requires_auth(client):
-    """Test that prediction endpoint requires authentication"""
-    response = client.post(
-        "/predict",
-        json={
-            "customer_id": "TEST001",
-            "gender": "Male",
-            "tenure": 24,
-            "monthly_charges": 75.5,
-            "total_charges": 1810.0,
-            "contract": "One year",
-            "payment_method": "Bank transfer (automatic)",
-            "internet_service": "Fiber optic"
-        }
+        timestamps = self.requests[key]
+
+        cutoff_time = current_time - window_second
+        timestamps = [ts for ts in timestamps if ts > cutoff_time]
+
+        if len(timestamps) >= max_requests:
+            return False
+
+        timestamps.append(current_time)
+        self.requests[key] = timestamps
+
+        return True
+    
+    def _cleanup_old_entries(self, current_time: float):
+        """Remove old entries to prevent memory growth"""
+        cutoff_time = current_time - 3600
+
+        keys_to_remove = []
+        for key, timestamps in self.requests.items():
+            timestamps = [ts for ts in timestamps if ts > cutoff_time]
+            if not timestamps:
+                keys_to_remove.append(key)
+            else:
+                self.requests[key] = timestamps
+        
+        for key in keys_to_remove:
+            del self.requests[key]
+        
+        self.last_cleanup = current_time
+        logger.debug(f"Rate limiter cleanup: removed {len(keys_to_remove)} keys")
+
+# ==========================================
+# Redis-Based Rate Limiter (Production)
+# ==========================================
+
+class RedisrateLimiter:
+    """
+    Redis-based rate limiter
+    
+    Good for multi-instance deployments (distributed)
+    """
+
+    def __init__(self, redis_url: str = None):
+        """
+        Initialize Redis connection
+        
+        Args:
+            redis_url: Redis connection URL
+        """
+        redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+        try:
+            self.redis_client  = redis.from_url(redis_url, decode_responses=True)
+            self.redis_client.ping()
+            logger.info("Connected to Redis for rate limiting")
+
+        except Exception as e:
+            logger.warning(f"Redis connection failed: {e}. Falling back to in-memory limiter")
+            self.redis_client = None
+            self.fallback_limiter = InMemoryRateLimiter()
+    
+    def is_allowed(
+            self,
+            key: str,
+            max_requests: int,
+            window_seconds: int
+    ) -> bool:
+        """
+        Check if request is allowed using Redis
+        
+        Args:
+            key: Identifier (e.g., IP address or user ID)
+            max_requests: Maximum requests allowed
+            window_seconds: Time window in seconds
+            
+        Returns:
+            True if request is allowed
+        """
+        if self.redis_client is None:
+            return self.fallback_limiter.is_allowed(key, max_requests, window_seconds)
+        
+        try:
+            redis_key = f"rate_limit:{key}"
+
+            current = self.redis_client.get(redis_key)
+
+            if current is None:
+                pipe = self.redis_client.pipeline()
+                pipe.set(redis_key, 1)
+                pipe.expire(redis_key, window_seconds)
+                pipe.execute()
+                return True
+            
+            current_count = int(current)
+
+            if current_count >= max_requests:
+                return False
+            
+            self.redis_client.incr(redis_key)
+            return True
+        
+        except Exception as e:
+            logger.error(f"Redis rate limit error: {e}")
+            return True
+        
+# ==========================================
+# FastAPI Integration
+# ==========================================
+
+REDIS_URL = os.getenv("REDIS_URL")
+
+if REDIS_URL:
+    rate_limiter = RedisrateLimiter(REDIS_URL)
+    logger.info("Using Redis-based rate limiting")
+else:
+    rate_limiter = InMemoryRateLimiter()
+    logger.info("Using in-memory rate limiting")
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["100/hour"],
+    storage_uri=REDIS_URL if REDIS_URL else "memory://"
+)
+
+# ==========================================
+# Custom Rate Limit Decorators
+# ==========================================
+
+def custom_rate_limit(max_requests: int, window_seconds: int):
+    """
+    Custom rate limit decorator
+    
+    Usage:
+        @custom_rate_limit(max_requests=10, window_seconds=60)
+        async def my_endpoint():
+            ...
+    
+    Args:
+        max_requests: Maximum requests allowed
+        window_seconds: Time window in seconds
+    """
+    def decorator(func: Callable) -> Callable:
+        async def wrapper(request: Request, *args, **kwargs):
+            identifier = get_remote_address(request)
+
+            if not rate_limiter.is_allowed(identifier, max_requests, window_seconds):
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Max {max_requests} requests per {window_seconds} seconds."
+                )
+            
+            return await func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+def user_rate_limit(max_requests: int, window_seconds: int):
+    """
+    User-based rate limit (uses user ID instead of IP)
+    
+    Usage:
+        @user_rate_limit(max_requests=100, window_seconds=3600)
+        async def my_endpoint(current_user: User = Depends(get_current_user)):
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        async def wrapper(*args, current_user=None, **kwargs):
+            if current_user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required"
+                )
+            identifier = f"user:{current_user.id}"
+
+            if not rate_limiter.is_allowed(identifier, max_requests, window_seconds):
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Max {max_requests} requests per {window_seconds} seconds."
+                )
+            return await func(*args, current_user=current_user, **kwargs)
+        return wrapper
+    return decorator
+
+# ==========================================
+# Rate Limit Info Headers
+# ==========================================
+
+def add_rate_limit_headers(response, limit: int, remaining: int, reset_time: int):
+    """
+    Add rate limit info to response headers
+    
+    Args:
+        response: FastAPI response object
+        limit: Rate limit
+        remaining: Remaining requests
+        reset_time: Reset timestamp
+    """
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_time)
+
+async def _rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Rate limit exceeded",
+            "limit": str(exc.limit)
+        },
     )
     
-    # Should get 401 Unauthorized without token
-    assert response.status_code == 401
-
-def test_rate_limit_with_authenticated_user(client):
-    """Test rate limiting with authenticated user"""
-    db = SessionLocal()
-    
-    try:
-        # Create test user
-        crud.create_user(
-            db=db,
-            username="ratelimituser",
-            email="ratelimit@example.com",
-            password="RateLimit123!",
-            role="user"
-        )
-        
-        # Login to get token
-        login_response = client.post(
-            "/auth/token",
-            data={
-                "username": "ratelimituser",
-                "password": "RateLimit123!"
-            }
-        )
-        
-        assert login_response.status_code == 200
-        token = login_response.json()["access_token"]
-        
-        # Make multiple authenticated requests
-        responses = []
-        for i in range(35):  # Prediction limit is 30/minute
-            response = client.post(
-                "/predict",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "customer_id": f"TEST{i:03d}",
-                    "gender": "Male",
-                    "tenure": 24,
-                    "monthly_charges": 75.5,
-                    "total_charges": 1810.0,
-                    "contract": "One year",
-                    "payment_method": "Bank transfer (automatic)",
-                    "internet_service": "Fiber optic"
-                }
-            )
-            responses.append(response.status_code)
-        
-        # Should get 429 after exceeding limit
-        assert 429 in responses, f"Expected 429 in responses, got: {responses}"
-        
-    finally:
-        db.close()

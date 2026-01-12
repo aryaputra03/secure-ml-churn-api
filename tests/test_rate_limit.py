@@ -124,7 +124,7 @@ def test_rate_limit_with_authenticated_user(client):
     
     try:
         # Create test user
-        user = crud.create_user(
+        crud.create_user(
             db=db,
             username="ratelimituser",
             email="ratelimit@example.com",
