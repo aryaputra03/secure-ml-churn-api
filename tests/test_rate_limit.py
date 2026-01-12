@@ -276,7 +276,7 @@ def test_redis_connection():
 
 
 @pytest.mark.skipif(
-    not pytest.config.getoption("--redis", default=False),
+    not pytest.Config.getoption("--redis", default=False),
     reason="Redis tests skipped (use --redis to enable)"
 )
 def test_redis_rate_limiting():
