@@ -1,12 +1,7 @@
 """
 Tests for Rate Limiting
 """
-import pytest
 import time
-from fastapi.testclient import TestClient
-
-from src.api.main import app
-from src.api.database import get_db
 from src.api import crud
 
 
@@ -179,8 +174,6 @@ def test_rate_limit_with_authenticated_user(client, db_session):
 
 def test_rate_limit_different_endpoints(client):
     """Test that rate limits are per-endpoint"""
-    # Hit root endpoint
-    root_responses = [client.get("/").status_code for _ in range(3)]
     
     # Hit health endpoint (should not be affected by root limit)
     health_responses = [client.get("/health").status_code for _ in range(3)]
