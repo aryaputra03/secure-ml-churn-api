@@ -513,15 +513,13 @@ Updated to use modern FastAPI lifespan events.
 from contextlib import asynccontextmanager
 from fastapi import (
     FastAPI, HTTPException, Depends, BackgroundTasks, 
-    File, UploadFile, Query, Request, status
+    Query, Request, status
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import uvicorn
 from typing import List
 import pandas as pd
 from datetime import datetime, timedelta
-import io
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi.errors import RateLimitExceeded
 
