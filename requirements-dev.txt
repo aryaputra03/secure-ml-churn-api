@@ -43,5 +43,6 @@ python-jose[crypthography] == 3.3.0
 passlib[bcrypt]==1.7.4
 
 httpx==0.24.1
+email-validator
 
 

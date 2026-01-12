@@ -36,3 +36,4 @@ slowapi==0.1.9
 redis==5.0.1
 
 httpx==0.24.1
+email-validator
