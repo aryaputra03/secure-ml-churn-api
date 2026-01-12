@@ -146,7 +146,6 @@ cython_debug/
 *.h5
 *.hdf5
 *.pickle
-*.pkl
 
 # Model files
 *.joblib
@@ -163,7 +162,6 @@ data/interim/
 data/external/
 
 # Model directories
-models/*.pkl
 models/*.joblib
 models/*.h5
 models/checkpoints/
@@ -175,7 +173,7 @@ logs/
 # DVC
 /data/raw/churn_data.csv
 /data/processed/churn_processed.csv
-/models/churn_model.pkl
+# /models/churn_model.pkl
 
 # IDE
 .idea/

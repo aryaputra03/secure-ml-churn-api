@@ -21,13 +21,13 @@ from src.api import crud
 # Use in-memory SQLite for tests
 SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///:memory:"
 
-engine = create_engine(
+test_engine = create_engine(
     SQLALCHEMY_TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
 
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 # ==========================================
 # Database Fixtures
@@ -39,7 +39,7 @@ def db_session():
     Create a fresh database session for each test
     """
     # Create tables
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=test_engine)
     
     # Create session
     session = TestingSessionLocal()
@@ -49,7 +49,7 @@ def db_session():
     finally:
         session.close()
         # Drop all tables after test
-        Base.metadata.drop_all(bind=engine)
+        Base.metadata.drop_all(bind=test_engine)
 
 @pytest.fixture(scope="function")
 def client(db_session):

@@ -6,7 +6,7 @@ import time
 from fastapi.testclient import TestClient
 
 from src.api.main import app
-from src.api.database import Base, engine, SessionLocal, get_db
+from src.api.database import get_db
 from src.api import crud
 
 
@@ -14,40 +14,7 @@ from src.api import crud
 # Test Fixtures
 # ==========================================
 
-@pytest.fixture(scope="function", autouse=True)
-def reset_database():
-    """Reset database before each test"""
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-
-@pytest.fixture(scope="function")
-def db_session():
-    """Create a database session for testing"""
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-@pytest.fixture(scope="function")
-def client(db_session):
-    """Create test client with overridden database"""
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-    
-    app.dependency_overrides[get_db] = override_get_db
-    
-    with TestClient(app) as test_client:
-        yield test_client
-    
-    app.dependency_overrides.clear()
+# Note: db_session and client fixtures are defined in conftest.py
 
 
 # ==========================================
@@ -212,6 +179,8 @@ def test_rate_limit_with_authenticated_user(client, db_session):
 
 def test_rate_limit_different_endpoints(client):
     """Test that rate limits are per-endpoint"""
+    # Hit root endpoint
+    root_responses = [client.get("/").status_code for _ in range(3)]
     
     # Hit health endpoint (should not be affected by root limit)
     health_responses = [client.get("/health").status_code for _ in range(3)]
