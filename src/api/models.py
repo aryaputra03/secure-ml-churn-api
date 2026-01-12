@@ -2,9 +2,86 @@
 Pydantic Models for API Request/Response
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, EmailStr, validator
 from typing import Optional, List
 from datetime import datetime
+
+# ==========================================
+# Authentication Models
+# ==========================================
+
+class UserBase(BaseModel):
+    """Base user model"""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    full_name: Optional[str] = None
+
+class UserCreate(UserBase):
+    """User registration model"""
+    password: str = Field(..., min_length=8, max_length=100)
+
+    @validator('password')
+    def password_strength(cls, v):
+        if not any(char.isdigit() for char in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(char.isupper() for char in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        return v
+
+class UserUpdate(BaseModel):
+    """User update model"""
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+    password: Optional[str] = None
+
+
+class UserResponse(UserBase):
+    """User response model"""
+    id: int
+    role: str
+    is_active: bool
+    is_verified: bool
+    request_count: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    """Token response model"""
+    access_token: str
+    refresh_token: Optional[str] = None
+    token_type: str = "bearer"
+    expires_in = int = 1800
+
+class TokenData(BaseModel):
+    """Token payload data"""
+    username: Optional[str] = None
+    scopes: List[str] = []
+
+class PasswordReset(BaseModel):
+    """Password reset request"""
+    email: EmailStr
+
+class PasswordChange(BaseModel):
+    """Password change request"""
+    old_password: str
+    new_password: str = Field(..., min_length=8)
+
+# ==========================================
+# API Key Models
+# ==========================================
+
+class APICreate(BaseModel):
+    """API key creation request"""
+    name: str = Field(..., max_length=100)
+    description: Optional[str] = None
+
+class APIKeyResponse(BaseModel):
+    """API key response"""
+    key: str
+    name: str
+    created_at: datetime
 
 class PredictionRequest(BaseModel):
     """Request model for single prediction"""
