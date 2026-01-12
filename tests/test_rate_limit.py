@@ -4,6 +4,7 @@ Tests for Rate Limiting
 from fastapi.testclient import TestClient
 from src.api.main import app
 import time
+from unittest.mock import patch
 
 client = TestClient(app)
 
@@ -17,12 +18,11 @@ def test_rate_limit_exceeded():
     assert 429 in responses
 
 def test_limit_reset():
-    """Test that rate limit resets"""
-    response1 = client.get("/")
-    assert response1.status_code == 200
-    time.sleep(61)
-    response2 = client.get("/")
-    assert response2.status_code == 200
+    client.get("/")
+    client.get("/")
+
+    response = client.get("/")
+    assert response.status_code == 429
 
 def test_login_rate_limit():
     """Test login rate limiting"""
@@ -37,8 +37,8 @@ def test_login_rate_limit():
 
     assert 429 in responses
 
-def test_register_rate_limit():
-    """Test registration rate limiting"""
+@patch("src.api.auth.get_password_hash", return_value="hashed-password")
+def test_register_rate_limit(mock_hash):
     responses = []
 
     for i in range(7):

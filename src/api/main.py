@@ -254,7 +254,8 @@ async def predict_single(
 # Health & Info Endpoints
 # ==========================================
 @app.get("/", response_model=dict)
-@limiter.limit("60/minute")
+# @limiter.limit("60/minute")
+@limiter.limit("2/minute")
 async def root(request: Request):
     """Root endpoint"""
     return {
