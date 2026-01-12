@@ -34,30 +34,27 @@ oauth2_scheme = OAuth2PasswordBearer(
 # ==========================================
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a plain password against hashed password
+    if isinstance(plain_password, str):
+        password_bytes = plain_password.encode('utf-8')
+    else:
+        password_bytes = plain_password
     
-    Args:
-        plain_password: Plain text password
-        hashed_password: Hashed password from database
-        
-    Returns:
-        True if password matches
-    """
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        plain_password = password_bytes.decode('utf-8', errors='ignore')
+    
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """
-    Hash a password
+    if isinstance(password, str):
+        password_bytes = password.encode('utf-8')
+    else:
+        password_bytes = password
     
-    Args:
-        password: Plain text password
-        
-    Returns:
-        Hashed password
-    """
-    if len(password.encode("utf-8")) > 72:
-        raise ValueError("Password too long (max 72 bytes)")
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        password = password_bytes.decode('utf-8', errors='ignore')
+    
     return pwd_context.hash(password)
 
 # ==========================================

@@ -156,8 +156,8 @@ jobs:
       
   
 # ==========================================
-# Job 4: Rate Limiting Tests
-# ==========================================
+  # Job 4: Rate Limiting Tests
+  # ==========================================
   test-rate-limit:
     name: Rate Limiting Tests
     runs-on: ubuntu-latest
@@ -188,18 +188,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Test Redis connection (Python)
+      - name: Test Redis connection
         run: |
-          python - <<EOF
-          import redis
-          r = redis.Redis(host="localhost", port=6379, decode_responses=True)
-          assert r.ping() is True
-          print("Redis connection OK")
-          EOF
+          python -c "import redis; r = redis.Redis(host='localhost', port=6379, decode_responses=True); r.ping(); print('Redis OK')"
 
       - name: Run rate limiting tests
         env:
           REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ${{ env.SECRET_KEY }}
         run: |
           pytest tests/test_rate_limit.py -v \
             --cov=src.api.rate_limit \
