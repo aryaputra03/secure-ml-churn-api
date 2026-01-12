@@ -3,7 +3,6 @@ Tests for Rate Limiting
 """
 from fastapi.testclient import TestClient
 from src.api.main import app
-import time
 from unittest.mock import patch
 
 client = TestClient(app)
