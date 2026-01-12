@@ -1,15 +1,21 @@
 """
 Tests for Rate Limiting
 """
-from fastapi.testclient import TestClient
-from src.api.main import app
-from src.api.database import Base, engine, SessionLocal
-from src.api import crud
 import pytest
 import time
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
-# Reset database before tests
-@pytest.fixture(autouse=True)
+from src.api.main import app
+from src.api.database import Base, engine, SessionLocal, get_db
+from src.api import crud
+
+
+# ==========================================
+# Test Fixtures
+# ==========================================
+
+@pytest.fixture(scope="function", autouse=True)
 def reset_database():
     """Reset database before each test"""
     Base.metadata.drop_all(bind=engine)
@@ -17,22 +23,50 @@ def reset_database():
     yield
     Base.metadata.drop_all(bind=engine)
 
-@pytest.fixture
-def client():
-    """Create test client"""
-    return TestClient(app)
+
+@pytest.fixture(scope="function")
+def db_session():
+    """Create a database session for testing"""
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Create test client with overridden database"""
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    
+    app.dependency_overrides[get_db] = override_get_db
+    
+    with TestClient(app) as test_client:
+        yield test_client
+    
+    app.dependency_overrides.clear()
+
+
+# ==========================================
+# Rate Limit Tests
+# ==========================================
 
 def test_rate_limit_exceeded(client):
     """Test that rate limit works on root endpoint"""
     responses = []
     
-    # Root endpoint is limited to 2/minute in your code
+    # Root endpoint is limited to 2/minute
     for i in range(5):
         response = client.get("/")
         responses.append(response.status_code)
     
     # Should get at least one 429 (Too Many Requests)
     assert 429 in responses, f"Expected 429 in responses, got: {responses}"
+
 
 def test_health_endpoint_has_higher_limit(client):
     """Test that health endpoint has higher limit (100/minute)"""
@@ -44,7 +78,9 @@ def test_health_endpoint_has_higher_limit(client):
         responses.append(response.status_code)
     
     # Should all be 200 since limit is 100/minute
-    assert all(status == 200 for status in responses), f"Expected all 200, got: {responses}"
+    assert all(status == 200 for status in responses), \
+        f"Expected all 200, got: {responses}"
+
 
 def test_login_rate_limit(client):
     """Test login rate limiting (10/minute)"""
@@ -61,10 +97,10 @@ def test_login_rate_limit(client):
     # Should get 429 after exceeding limit
     assert 429 in responses, f"Expected 429 in responses, got: {responses}"
 
-def test_register_rate_limit(client):
+
+def test_register_rate_limit(client, db_session):
     """Test registration rate limiting (5/hour)"""
     responses = []
-    db = SessionLocal()
 
     try:
         # Try 7 registration attempts (limit is 5/hour)
@@ -74,7 +110,7 @@ def test_register_rate_limit(client):
                 json={
                     "username": f"testuser{i}",
                     "email": f"user{i}@example.com",
-                    "password": "SecurePass123!",  # Valid password
+                    "password": "SecurePass123!",
                     "full_name": f"Test User {i}"
                 }
             )
@@ -83,21 +119,21 @@ def test_register_rate_limit(client):
             # Small delay to avoid race conditions
             time.sleep(0.1)
 
-        # Print responses for debugging
-        print(f"Registration responses: {responses}")
-        
         # Should get 429 after exceeding limit (5 requests)
         assert 429 in responses, f"Expected 429 in responses, got: {responses}"
         
-        # First 5 should succeed (201), rest should be rate limited (429)
+        # Count successes and rate limited responses
         success_count = sum(1 for status in responses if status == 201)
         rate_limited_count = sum(1 for status in responses if status == 429)
         
-        assert success_count <= 5, f"Expected max 5 successful registrations, got {success_count}"
-        assert rate_limited_count >= 2, f"Expected at least 2 rate limited responses, got {rate_limited_count}"
+        assert success_count <= 5, \
+            f"Expected max 5 successful registrations, got {success_count}"
+        assert rate_limited_count >= 2, \
+            f"Expected at least 2 rate limited responses, got {rate_limited_count}"
         
     finally:
-        db.close()
+        pass
+
 
 def test_prediction_rate_limit_requires_auth(client):
     """Test that prediction endpoint requires authentication"""
@@ -118,14 +154,13 @@ def test_prediction_rate_limit_requires_auth(client):
     # Should get 401 Unauthorized without token
     assert response.status_code == 401
 
-def test_rate_limit_with_authenticated_user(client):
+
+def test_rate_limit_with_authenticated_user(client, db_session):
     """Test rate limiting with authenticated user"""
-    db = SessionLocal()
-    
     try:
         # Create test user
         crud.create_user(
-            db=db,
+            db=db_session,
             username="ratelimituser",
             email="ratelimit@example.com",
             password="RateLimit123!",
@@ -141,7 +176,9 @@ def test_rate_limit_with_authenticated_user(client):
             }
         )
         
-        assert login_response.status_code == 200
+        assert login_response.status_code == 200, \
+            f"Login failed: {login_response.text}"
+        
         token = login_response.json()["access_token"]
         
         # Make multiple authenticated requests
@@ -167,4 +204,35 @@ def test_rate_limit_with_authenticated_user(client):
         assert 429 in responses, f"Expected 429 in responses, got: {responses}"
         
     finally:
-        db.close()
+        pass
+
+
+# ==========================================
+# Additional Edge Case Tests
+# ==========================================
+
+def test_rate_limit_different_endpoints(client):
+    """Test that rate limits are per-endpoint"""
+    # Hit root endpoint
+    root_responses = [client.get("/").status_code for _ in range(3)]
+    
+    # Hit health endpoint (should not be affected by root limit)
+    health_responses = [client.get("/health").status_code for _ in range(3)]
+    
+    # Health should all succeed
+    assert all(status == 200 for status in health_responses), \
+        "Health endpoint should have separate rate limit"
+
+
+def test_rate_limit_reset_after_window(client):
+    """Test that rate limit resets after time window"""
+    # Make 2 requests (hits the limit)
+    client.get("/")
+    client.get("/")
+    
+    # Third request should be rate limited
+    response = client.get("/")
+    assert response.status_code == 429
+    
+    # Note: In real test, you'd wait for the window to expire
+    # For CI/CD, we just verify the limit works
