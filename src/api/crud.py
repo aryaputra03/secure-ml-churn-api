@@ -7,7 +7,6 @@ from src.api import schemas
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from src.api.auth import get_password_hash
-from datetime import datetime
 
 # ==========================================
 # User CRUD Operations

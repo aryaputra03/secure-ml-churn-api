@@ -4,9 +4,8 @@ Rate Limiting Module
 Implements request rate limiting to prevent API abuse.
 """
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from fastapi import Request, HTTPException, status
 from typing import Callable
 import time
