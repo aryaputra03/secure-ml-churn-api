@@ -56,6 +56,8 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password
     """
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Password too long (max 72 bytes)")
     return pwd_context.hash(password)
 
 # ==========================================
