@@ -41,5 +41,7 @@ passlib[bcrypt]==1.7.4
 
 httpx==0.24.1
 email-validator
-
+redis==5.0.1
+slowapi==0.1.9
+scikit-learn==1.7.1
 
