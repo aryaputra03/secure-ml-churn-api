@@ -216,7 +216,7 @@
 #         .first()
 
 """
-CRUD Operations for Database
+CRUD Operations for Database - FIXED
 """
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -228,7 +228,7 @@ from datetime import datetime, timedelta
 from src.api.auth import get_password_hash
 
 # ==========================================
-# User CRUD Operations
+# User CRUD Operations - FIXED
 # ==========================================
 
 def create_user(
@@ -241,17 +241,20 @@ def create_user(
     """
     Create new user with hashed password
     
+    Password is automatically truncated to 72 bytes if necessary
+    for bcrypt compatibility.
+    
     Args:
         db: Database session
         username: Username
         email: Email address
-        password: Plain text password (will be hashed)
+        password: Plain text password (will be hashed and truncated if needed)
         **kwargs: Additional user fields (full_name, role, etc.)
         
     Returns:
         Created user object
     """
-    # Hash password with bcrypt (automatically handles 72 byte limit)
+    # Hash password (get_password_hash automatically handles truncation)
     hashed_password = get_password_hash(password)
     
     db_user = schemas.User(
@@ -301,6 +304,7 @@ def update_user(db: Session, user_id: int, **kwargs) -> Optional[schemas.User]:
     
     # Handle password update separately
     if 'password' in kwargs and kwargs['password'] is not None:
+        # Hash new password (automatically handles truncation)
         kwargs['hashed_password'] = get_password_hash(kwargs.pop('password'))
     
     for key, value in kwargs.items():

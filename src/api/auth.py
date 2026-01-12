@@ -277,7 +277,7 @@
 Authentication & Authorization Module
 
 Implements JWT-based authentication with OAuth2 password flow.
-SIMPLIFIED VERSION WITH GUARANTEED BCRYPT FIX
+FIXED VERSION - Handles bcrypt 72-byte limitation properly
 """
 
 from datetime import datetime, timedelta
@@ -306,15 +306,44 @@ oauth2_scheme = OAuth2PasswordBearer(
 )
 
 # ==========================================
-# Password Utilities - SIMPLIFIED
+# Password Utilities - FIXED BCRYPT HANDLING
 # ==========================================
+
+def _truncate_password(password: str) -> str:
+    """
+    Safely truncate password to 72 bytes for bcrypt
+    
+    Bcrypt has a hard limit of 72 bytes.
+    This function ensures we never exceed that limit.
+    
+    Args:
+        password: Plain text password
+        
+    Returns:
+        Truncated password (max 72 bytes)
+    """
+    if not isinstance(password, str):
+        password = str(password)
+    
+    # Convert to bytes
+    password_bytes = password.encode('utf-8')
+    
+    # If longer than 72 bytes, truncate
+    if len(password_bytes) > 72:
+        # Truncate to 72 bytes
+        password_bytes = password_bytes[:72]
+        # Convert back, ignoring any incomplete multibyte characters
+        password = password_bytes.decode('utf-8', errors='ignore')
+        logger.warning("Password truncated to 72 bytes for bcrypt compatibility")
+    
+    return password
+
 
 def get_password_hash(password: str) -> str:
     """
     Hash a password using bcrypt
     
-    BCRYPT LIMITATION: Maximum 72 bytes
-    This function automatically truncates to 72 bytes
+    Automatically truncates to 72 bytes if necessary.
     
     Args:
         password: Plain text password
@@ -322,21 +351,11 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password
     """
-    # CRITICAL: Bcrypt has a 72 byte limit
-    # Truncate BEFORE hashing to avoid ValueError
+    # Truncate password to bcrypt's 72-byte limit
+    truncated = _truncate_password(password)
     
-    # Ensure password is string
-    if not isinstance(password, str):
-        password = str(password)
-    
-    # Convert to bytes and truncate to 72 bytes
-    password_bytes = password.encode('utf-8')[:72]
-    
-    # Convert back to string (may be shorter if multibyte chars were truncated)
-    truncated_password = password_bytes.decode('utf-8', errors='ignore')
-    
-    # Now hash the truncated password
-    return pwd_context.hash(truncated_password)
+    # Hash the truncated password
+    return pwd_context.hash(truncated)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -350,16 +369,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches
     """
-    # Ensure password is string
-    if not isinstance(plain_password, str):
-        plain_password = str(plain_password)
-    
-    # Truncate same way as when hashing
-    password_bytes = plain_password.encode('utf-8')[:72]
-    truncated_password = password_bytes.decode('utf-8', errors='ignore')
+    # Truncate password same way as when hashing
+    truncated = _truncate_password(plain_password)
     
     # Verify with truncated password
-    return pwd_context.verify(truncated_password, hashed_password)
+    return pwd_context.verify(truncated, hashed_password)
 
 
 # ==========================================
