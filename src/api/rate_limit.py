@@ -13,6 +13,8 @@ from collections import defaultdict
 import redis
 import os
 from src.utils import logger
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 
 # ==========================================
 # In-Memory Rate Limiter (Simple)
@@ -250,3 +252,13 @@ def add_rate_limit_headers(response, limit: int, remaining: int, reset_time: int
     response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
     response.headers["X-RateLimit-Reset"] = str(reset_time)
+
+async def _rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Rate limit exceeded",
+            "limit": str(exc.limit)
+        },
+    )
+    

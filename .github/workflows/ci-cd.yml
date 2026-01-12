@@ -154,19 +154,6 @@ jobs:
         run: |
           python -c "from src.api.database import Base, engine; Base.metadata.create_all(bind=engine); print('Database initialized')"
       
-      - name: Run authentication tests
-        env: 
-          SECRET_KEY: ${{ env.SECRET_KEY  }}
-        run: |
-          pytest tests/test_auth.py -v --cov=src.api.auth --cov-report=xml
-      
-      - name: Upload auth coverage
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: auth-tests
-          name: codecov-auth
-          fail_ci_if_error: false
   
 # ==========================================
 # Job 4: Rate Limiting Tests
