@@ -52,7 +52,7 @@ class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
     token_type: str = "bearer"
-    expires_in = int = 1800
+    expires_in : int = 1800
 
 class TokenData(BaseModel):
     """Token payload data"""
