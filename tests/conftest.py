@@ -177,7 +177,7 @@ def reset_rate_limiter():
     try:
         from src.api.main import limiter
         limiter.reset()
-    except:
+    except Exception:
         pass
     
     yield
