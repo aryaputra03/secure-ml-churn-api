@@ -476,26 +476,44 @@ def verify_token(token: str, credentials_exception: HTTPException) -> Dict[str, 
 # User Authentication
 # ==========================================
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[schemas.User]:
-    """
-    Authenticate user with username and password
+# def authenticate_user(db: Session, username: str, password: str) -> Optional[schemas.User]:
+#     """
+#     Authenticate user with username and password
     
-    Args:
-        db: Database session
-        username: Username
-        password: Plain text password
+#     Args:
+#         db: Database session
+#         username: Username
+#         password: Plain text password
         
-    Returns:
-        User object if authentication successful, None otherwise
+#     Returns:
+#         User object if authentication successful, None otherwise
+#     """
+#     from src.api import crud
+
+#     user = crud.get_user_by_username(db, username)
+#     if not user:
+#         return None
+    
+#     if not verify_password(password, user.hashed_password):
+#         return None
+    
+#     return user
+
+def authenticate_user(db: Session, username: str, password: str):
+    """
+    Authenticate user
+    
+    IMPORTANT: Must use crud.verify_password to ensure consistency
     """
     from src.api import crud
-
+    
     user = crud.get_user_by_username(db, username)
     if not user:
-        return None
+        return False
     
-    if not verify_password(password, user.hashed_password):
-        return None
+    # Use crud.verify_password - NOT pwd_context.verify directly
+    if not crud.verify_password(password, user.hashed_password):
+        return False
     
     return user
 
