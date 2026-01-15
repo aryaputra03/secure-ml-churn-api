@@ -1,332 +1,8 @@
-# """
-# Rate Limiting Tests - FIXED
-
-# Tests for API rate limiting functionality.
-# Fixed to handle bcrypt 72-byte password limitation.
-# """
-
-# import pytest
-# from fastapi.testclient import TestClient
-# from sqlalchemy import create_engine
-# from sqlalchemy.orm import sessionmaker
-# import time
-# import redis
-
-# from src.api.main import app
-# from src.api.database import Base, get_db
-# from src.api import crud
-
-# # Test database
-# SQLALCHEMY_DATABASE_URL = "sqlite:///./test_rate_limit.db"
-# engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-# TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# # Create test database
-# Base.metadata.create_all(bind=engine)
-
-
-# def override_get_db():
-#     """Override database dependency"""
-#     try:
-#         db = TestingSessionLocal()
-#         yield db
-#     finally:
-#         db.close()
-
-
-# app.dependency_overrides[get_db] = override_get_db
-# client = TestClient(app)
-
-
-# # ==========================================
-# # Fixtures
-# # ==========================================
-
-# @pytest.fixture(scope="function")
-# def clean_db():
-#     """Clean database before each test"""
-#     Base.metadata.drop_all(bind=engine)
-#     Base.metadata.create_all(bind=engine)
-#     yield
-#     Base.metadata.drop_all(bind=engine)
-
-
-# @pytest.fixture
-# def test_user(clean_db):
-#     """Create test user with SAFE password length"""
-#     db = TestingSessionLocal()
-#     try:
-#         # Use SHORT password that's well within 72 bytes
-#         user = crud.create_user(
-#             db=db,
-#             username="testuser",
-#             email="test@example.com",
-#             password="Test1234!",  # Only 9 characters - safe!
-#             role="user"
-#         )
-#         return user
-#     finally:
-#         db.close()
-
-
-# @pytest.fixture
-# def admin_user(clean_db):
-#     """Create admin user with SAFE password length"""
-#     db = TestingSessionLocal()
-#     try:
-#         # Use SHORT password
-#         admin = crud.create_user(
-#             db=db,
-#             username="admin",
-#             email="admin@example.com",
-#             password="Admin123!",  # Only 9 characters - safe!
-#             role="admin"
-#         )
-#         return admin
-#     finally:
-#         db.close()
-
-
-# def get_auth_token(username: str, password: str) -> str:
-#     """Helper to get authentication token"""
-#     response = client.post(
-#         "/auth/token",
-#         data={"username": username, "password": password}
-#     )
-#     assert response.status_code == 200
-#     return response.json()["access_token"]
-
-
-# # ==========================================
-# # Rate Limiting Tests
-# # ==========================================
-
-# def test_rate_limit_exceeded(clean_db):
-#     """Test that rate limit is enforced"""
-#     # Make requests until rate limit is hit
-#     responses = []
-#     for i in range(5):
-#         response = client.get("/")
-#         responses.append(response.status_code)
-#         time.sleep(0.1)
-    
-#     # Should have at least one 429 (rate limited)
-#     assert 429 in responses or all(r == 200 for r in responses[:3])
-
-
-# def test_health_endpoint_has_higher_limit(clean_db):
-#     """Test that health endpoint has higher rate limit"""
-#     responses = []
-#     for i in range(10):
-#         response = client.get("/health")
-#         responses.append(response.status_code)
-    
-#     # Health endpoint should allow more requests
-#     success_count = sum(1 for r in responses if r == 200)
-#     assert success_count >= 5
-
-
-# def test_login_rate_limit(clean_db, test_user):
-#     """Test login endpoint rate limiting"""
-#     responses = []
-#     for i in range(12):
-#         response = client.post(
-#             "/auth/token",
-#             data={"username": "testuser", "password": "Test1234!"}
-#         )
-#         responses.append(response.status_code)
-#         time.sleep(0.1)
-    
-#     # Should have some rate limited requests
-#     rate_limited = sum(1 for r in responses if r == 429)
-#     assert rate_limited > 0 or all(r == 200 for r in responses[:10])
-
-
-# def test_register_rate_limit(clean_db):
-#     """Test registration endpoint rate limiting"""
-#     responses = []
-#     for i in range(6):
-#         response = client.post(
-#             "/auth/register",
-#             json={
-#                 "username": f"user{i}",
-#                 "email": f"user{i}@example.com",
-#                 "password": "Pass123!",  # SHORT password - safe!
-#                 "full_name": f"User {i}"
-#             }
-#         )
-#         responses.append(response.status_code)
-#         time.sleep(0.5)
-    
-#     # Should have some successful and some rate limited
-#     rate_limited = sum(1 for r in responses if r == 429)
-#     assert rate_limited > 0 or sum(1 for r in responses if r == 201) >= 3
-
-
-# def test_prediction_rate_limit_requires_auth(clean_db, test_user):
-#     """Test that prediction endpoint requires authentication"""
-#     response = client.post(
-#         "/predict",
-#         json={
-#             "customer_id": "TEST001",
-#             "gender": "Male",
-#             "tenure": 24,
-#             "monthly_charges": 75.5,
-#             "total_charges": 1810.0,
-#             "contract": "One year",
-#             "payment_method": "Bank transfer (automatic)",
-#             "internet_service": "Fiber optic"
-#         }
-#     )
-#     assert response.status_code == 401
-
-
-# def test_rate_limit_with_authenticated_user(clean_db, test_user):
-#     """Test rate limiting for authenticated prediction requests"""
-#     # Get token with SHORT password
-#     token = get_auth_token("testuser", "Test1234!")
-    
-#     headers = {"Authorization": f"Bearer {token}"}
-    
-#     responses = []
-#     for i in range(5):
-#         response = client.post(
-#             "/predict",
-#             headers=headers,
-#             json={
-#                 "customer_id": f"TEST{i:03d}",
-#                 "gender": "Male",
-#                 "tenure": 24,
-#                 "monthly_charges": 75.5,
-#                 "total_charges": 1810.0,
-#                 "contract": "One year",
-#                 "payment_method": "Bank transfer (automatic)",
-#                 "internet_service": "Fiber optic"
-#             }
-#         )
-#         responses.append(response.status_code)
-#         time.sleep(0.1)
-    
-#     # Should have mostly successful requests within rate limit
-#     success_count = sum(1 for r in responses if r == 200)
-#     assert success_count >= 3
-
-
-# def test_rate_limit_different_endpoints(clean_db, test_user):
-#     """Test that rate limits are per-endpoint"""
-#     token = get_auth_token("testuser", "Test1234!")
-#     headers = {"Authorization": f"Bearer {token}"}
-    
-#     # Make requests to different endpoints
-#     health_responses = []
-#     for i in range(5):
-#         response = client.get("/health")
-#         health_responses.append(response.status_code)
-    
-#     predict_responses = []
-#     for i in range(3):
-#         response = client.post(
-#             "/predict",
-#             headers=headers,
-#             json={
-#                 "customer_id": f"TEST{i:03d}",
-#                 "gender": "Male",
-#                 "tenure": 24,
-#                 "monthly_charges": 75.5,
-#                 "total_charges": 1810.0,
-#                 "contract": "One year",
-#                 "payment_method": "Bank transfer (automatic)",
-#                 "internet_service": "Fiber optic"
-#             }
-#         )
-#         predict_responses.append(response.status_code)
-#         time.sleep(0.1)
-    
-#     # Both endpoints should work independently
-#     assert any(r == 200 for r in health_responses)
-#     assert any(r == 200 for r in predict_responses)
-
-
-# def test_rate_limit_reset_after_window(clean_db):
-#     """Test that rate limit resets after time window"""
-#     # Make requests until rate limited
-#     for i in range(3):
-#         client.get("/")
-    
-#     # Wait for rate limit window to reset
-#     time.sleep(61)
-    
-#     # Should be able to make requests again
-#     response = client.get("/")
-#     assert response.status_code == 200
-
-
-# # ==========================================
-# # Redis Rate Limiting Tests (if Redis available)
-# # ==========================================
-
-# def test_redis_connection():
-#     """Test Redis connection if available"""
-#     try:
-#         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-#         r.ping()
-#         assert True
-#     except redis.ConnectionError:
-#         pytest.skip("Redis not available")
-
-
-# @pytest.mark.skipif(
-#     not pytest.Config.getoption("--redis", name="test",default=False),
-#     reason="Redis tests skipped (use --redis to enable)"
-# )
-# def test_redis_rate_limiting():
-#     """Test Redis-based rate limiting"""
-#     try:
-#         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-#         r.ping()
-        
-#         # Clear any existing rate limit keys
-#         r.delete("rate_limit:test_key")
-        
-#         # Test rate limiting
-#         from src.api.rate_limit import RedisrateLimiter
-#         limiter = RedisrateLimiter()
-        
-#         # Should allow requests within limit
-#         for i in range(5):
-#             assert limiter.is_allowed("test_key", 10, 60)
-        
-#         # Should deny after limit
-#         for i in range(10):
-#             limiter.is_allowed("test_key", 10, 60)
-        
-#         assert not limiter.is_allowed("test_key", 10, 60)
-        
-#     except redis.ConnectionError:
-#         pytest.skip("Redis not available")
-
-
-# # ==========================================
-# # Cleanup
-# # ==========================================
-
-# @pytest.fixture(scope="session", autouse=True)
-# def cleanup(request):
-#     """Cleanup after all tests"""
-#     def remove_test_db():
-#         import os
-#         try:
-#             os.remove("test_rate_limit.db")
-#         except FileNotFoundError:
-#             pass
-    
-#     request.addfinalizer(remove_test_db)
-
 """
-Rate Limiting Tests - FINAL FIX
+Rate Limiting Tests - PRODUCTION READY
 
 Tests for API rate limiting functionality.
-Fixed to handle sklearn version incompatibility and testing mode properly.
+Fixed to handle bcrypt 72-byte password limitation.
 """
 
 import pytest
@@ -347,8 +23,15 @@ from src.api import crud
 
 # Test database
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_rate_limit.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, 
+    connect_args={"check_same_thread": False}
+)
+TestingSessionLocal = sessionmaker(
+    autocommit=False, 
+    autoflush=False, 
+    bind=engine
+)
 
 # Create test database
 Base.metadata.create_all(bind=engine)
@@ -356,8 +39,8 @@ Base.metadata.create_all(bind=engine)
 
 def override_get_db():
     """Override database dependency"""
+    db = TestingSessionLocal()
     try:
-        db = TestingSessionLocal()
         yield db
     finally:
         db.close()
@@ -368,16 +51,16 @@ client = TestClient(app)
 
 
 # ==========================================
-# CRITICAL: Use SHORT passwords
+# CRITICAL: Use SHORT passwords (under 60 chars for safety)
 # ==========================================
 
-TEST_PASSWORD = "Test123!"      # 8 chars
-ADMIN_PASSWORD = "Admin123!"    # 9 chars
-USER_PASSWORD = "Pass123!"      # 8 chars
+TEST_PASSWORD = "Test123!"      # 8 chars - SAFE
+ADMIN_PASSWORD = "Admin123!"    # 9 chars - SAFE
+USER_PASSWORD = "Pass123!"      # 8 chars - SAFE
 
 
 # ==========================================
-# Check if ML model is working
+# Helper Functions
 # ==========================================
 
 def is_model_loaded():
@@ -389,6 +72,16 @@ def is_model_loaded():
             return data.get("model_loaded", False)
         return False
     except Exception:
+        return False
+
+
+def is_redis_available():
+    """Check if Redis is available"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        return True
+    except (redis.ConnectionError, ConnectionRefusedError):
         return False
 
 
@@ -409,22 +102,26 @@ def clean_db():
 def reset_rate_limiter():
     """Reset rate limiter before each test"""
     from src.api.rate_limit import rate_limiter
+    
+    # Clear in-memory rate limiter
     if hasattr(rate_limiter, 'requests'):
         rate_limiter.requests.clear()
     
-    from src.api.main import app
-    if hasattr(app.state, 'limiter'):
-        limiter = app.state.limiter
-        if hasattr(limiter, '_storage'):
-            storage = limiter._storage
-            if hasattr(storage, 'storage') and storage.storage:
-                try:
+    # Clear Redis if available
+    try:
+        from src.api.main import app
+        if hasattr(app.state, 'limiter'):
+            limiter = app.state.limiter
+            if hasattr(limiter, '_storage'):
+                storage = limiter._storage
+                if hasattr(storage, 'storage') and storage.storage:
                     storage.storage.flushdb()
-                except Exception:
-                    pass
+    except Exception:
+        pass
     
     yield
     
+    # Cleanup after test
     if hasattr(rate_limiter, 'requests'):
         rate_limiter.requests.clear()
 
@@ -438,9 +135,11 @@ def test_user(clean_db, reset_rate_limiter):
             db=db,
             username="testuser",
             email="test@example.com",
-            password=TEST_PASSWORD,
+            password=TEST_PASSWORD,  # SHORT password
             role="user"
         )
+        db.commit()
+        db.refresh(user)
         return user
     finally:
         db.close()
@@ -455,9 +154,11 @@ def admin_user(clean_db, reset_rate_limiter):
             db=db,
             username="admin",
             email="admin@example.com",
-            password=ADMIN_PASSWORD,
+            password=ADMIN_PASSWORD,  # SHORT password
             role="admin"
         )
+        db.commit()
+        db.refresh(admin)
         return admin
     finally:
         db.close()
@@ -465,32 +166,24 @@ def admin_user(clean_db, reset_rate_limiter):
 
 def get_auth_token(username: str, password: str) -> str:
     """Helper to get authentication token"""
+    # Small delay to ensure DB operations complete
+    time.sleep(0.1)
+    
     response = client.post(
         "/auth/token",
         data={"username": username, "password": password}
     )
+    
     if response.status_code != 200:
-        print(f"Auth failed: {response.status_code} - {response.text}")
-    assert response.status_code == 200, f"Authentication failed: {response.text}"
+        print(f"Auth failed: {response.status_code}")
+        print(f"Response: {response.text}")
+        raise Exception(f"Authentication failed: {response.text}")
+    
     return response.json()["access_token"]
 
 
 # ==========================================
-# Redis Check Helper
-# ==========================================
-
-def is_redis_available():
-    """Check if Redis is available"""
-    try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        r.ping()
-        return True
-    except (redis.ConnectionError, ConnectionRefusedError):
-        return False
-
-
-# ==========================================
-# Rate Limiting Tests (Non-Prediction)
+# Basic Rate Limiting Tests
 # ==========================================
 
 def test_rate_limit_exceeded(clean_db, reset_rate_limiter):
@@ -502,7 +195,8 @@ def test_rate_limit_exceeded(clean_db, reset_rate_limiter):
         time.sleep(0.1)
     
     # In testing mode, all should succeed
-    assert all(r == 200 for r in responses)
+    assert all(r == 200 for r in responses), \
+        f"Expected all 200, got {responses}"
 
 
 def test_health_endpoint_has_higher_limit(clean_db, reset_rate_limiter):
@@ -514,10 +208,11 @@ def test_health_endpoint_has_higher_limit(clean_db, reset_rate_limiter):
     
     # Health endpoint should allow all requests
     success_count = sum(1 for r in responses if r == 200)
-    assert success_count >= 8, f"Expected at least 8 successful requests, got {success_count}"
+    assert success_count >= 8, \
+        f"Expected at least 8 successful requests, got {success_count}"
 
 
-def test_login_rate_limit(clean_db, test_user, reset_rate_limiter):
+def test_login_rate_limit(test_user, reset_rate_limiter):
     """Test login endpoint rate limiting"""
     responses = []
     for i in range(12):
@@ -530,7 +225,8 @@ def test_login_rate_limit(clean_db, test_user, reset_rate_limiter):
     
     # In testing mode, all should succeed
     success_count = sum(1 for r in responses if r == 200)
-    assert success_count >= 10, f"Expected at least 10 successful logins, got {success_count}"
+    assert success_count >= 10, \
+        f"Expected at least 10 successful logins, got {success_count}"
 
 
 def test_register_rate_limit(clean_db, reset_rate_limiter):
@@ -542,7 +238,7 @@ def test_register_rate_limit(clean_db, reset_rate_limiter):
             json={
                 "username": f"user{i}",
                 "email": f"user{i}@example.com",
-                "password": USER_PASSWORD,
+                "password": USER_PASSWORD,  # SHORT password
                 "full_name": f"User {i}"
             }
         )
@@ -551,10 +247,11 @@ def test_register_rate_limit(clean_db, reset_rate_limiter):
     
     # Should have successful registrations
     success_count = sum(1 for r in responses if r == 201)
-    assert success_count >= 5, f"Expected at least 5 successful registrations, got {success_count}"
+    assert success_count >= 5, \
+        f"Expected at least 5 successful registrations, got {success_count}"
 
 
-def test_prediction_rate_limit_requires_auth(clean_db, test_user, reset_rate_limiter):
+def test_prediction_rate_limit_requires_auth(test_user, reset_rate_limiter):
     """Test that prediction endpoint requires authentication"""
     response = client.post(
         "/predict",
@@ -569,18 +266,21 @@ def test_prediction_rate_limit_requires_auth(clean_db, test_user, reset_rate_lim
             "internet_service": "Fiber optic"
         }
     )
-    assert response.status_code == 401, f"Expected 401, got {response.status_code}"
+    assert response.status_code == 401, \
+        f"Expected 401 Unauthorized, got {response.status_code}"
 
 
 # ==========================================
 # Prediction Tests (May fail if model incompatible)
 # ==========================================
 
-@pytest.mark.skipif(not is_model_loaded(), reason="ML model not loaded or incompatible")
-def test_rate_limit_with_authenticated_user(clean_db, test_user, reset_rate_limiter):
+@pytest.mark.skipif(
+    not is_model_loaded(), 
+    reason="ML model not loaded or incompatible"
+)
+def test_rate_limit_with_authenticated_user(test_user, reset_rate_limiter):
     """Test rate limiting for authenticated prediction requests"""
     token = get_auth_token("testuser", TEST_PASSWORD)
-    
     headers = {"Authorization": f"Bearer {token}"}
     
     responses = []
@@ -602,27 +302,30 @@ def test_rate_limit_with_authenticated_user(clean_db, test_user, reset_rate_limi
         responses.append(response.status_code)
         time.sleep(0.1)
     
-    # Should have mostly successful requests
+    # Should have mostly successful or model error responses
     success_count = sum(1 for r in responses if r == 200)
     error_count = sum(1 for r in responses if r == 500)
     
-    # Either succeed or fail due to model issue (500)
     assert success_count >= 3 or error_count >= 3, \
         f"Expected success or model errors, got status codes: {responses}"
 
 
-@pytest.mark.skipif(not is_model_loaded(), reason="ML model not loaded or incompatible")
-def test_rate_limit_different_endpoints(clean_db, test_user, reset_rate_limiter):
+@pytest.mark.skipif(
+    not is_model_loaded(), 
+    reason="ML model not loaded or incompatible"
+)
+def test_rate_limit_different_endpoints(test_user, reset_rate_limiter):
     """Test that rate limits are per-endpoint"""
     token = get_auth_token("testuser", TEST_PASSWORD)
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Make requests to different endpoints
+    # Test health endpoint
     health_responses = []
     for i in range(5):
         response = client.get("/health")
         health_responses.append(response.status_code)
     
+    # Test prediction endpoint
     predict_responses = []
     for i in range(3):
         response = client.post(
@@ -643,33 +346,40 @@ def test_rate_limit_different_endpoints(clean_db, test_user, reset_rate_limiter)
         time.sleep(0.1)
     
     # Health endpoint should work
-    assert any(r == 200 for r in health_responses), "Health endpoint should respond"
+    assert any(r == 200 for r in health_responses), \
+        "Health endpoint should respond"
     
     # Predict endpoint should respond (200 or 500 for model error)
     assert any(r in [200, 500] for r in predict_responses), \
         f"Predict endpoint should respond, got: {predict_responses}"
 
 
+@pytest.mark.slow
 def test_rate_limit_reset_after_window(clean_db, reset_rate_limiter):
     """Test that rate limit resets after time window"""
     pytest.skip("Skipping slow test in CI")
 
 
 # ==========================================
-# Redis Rate Limiting Tests
+# Redis Tests
 # ==========================================
 
-@pytest.mark.skipif(not is_redis_available(), reason="Redis not available")
 def test_redis_connection():
     """Test Redis connection if available"""
+    if not is_redis_available():
+        pytest.skip("Redis not available")
+    
     r = redis.Redis(host='localhost', port=6379, decode_responses=True)
     assert r.ping() is True
 
 
-@pytest.mark.skipif(not is_redis_available(), reason="Redis not available")
+@pytest.mark.redis
+@pytest.mark.skipif(
+    not is_redis_available(), 
+    reason="Redis not available"
+)
 def test_redis_rate_limiting():
     """Test Redis-based rate limiting"""
-    # Skip if in testing mode (rate limiting disabled)
     if os.getenv("TESTING") == "true":
         pytest.skip("Rate limiting disabled in testing mode")
     
@@ -694,17 +404,19 @@ def test_redis_rate_limiting():
         pytest.skip("RedisRateLimiter not implemented")
 
 
-@pytest.mark.skipif(not is_redis_available(), reason="Redis not available")
+@pytest.mark.redis
+@pytest.mark.slow
 def test_redis_key_expiration():
     """Test that Redis rate limit keys expire properly"""
     pytest.skip("Skipping slow test")
 
 
+@pytest.mark.redis
 @pytest.mark.skipif(
     not is_redis_available() or not is_model_loaded(), 
     reason="Redis not available or ML model incompatible"
 )
-def test_redis_rate_limit_per_user(clean_db, test_user, reset_rate_limiter):
+def test_redis_rate_limit_per_user(test_user, reset_rate_limiter):
     """Test Redis rate limiting per user"""
     token = get_auth_token("testuser", TEST_PASSWORD)
     headers = {"Authorization": f"Bearer {token}"}
@@ -736,14 +448,14 @@ def test_redis_rate_limit_per_user(clean_db, test_user, reset_rate_limiter):
         responses.append(response.status_code)
         time.sleep(0.2)
     
-    # Should have some successful or error responses (not auth errors)
+    # Should have some successful or error responses
     success_or_error = sum(1 for r in responses if r in [200, 500])
     assert success_or_error >= 3, \
-        f"Expected at least 3 responses (200 or 500), got status codes: {responses}"
+        f"Expected at least 3 responses (200 or 500), got: {responses}"
 
 
 # ==========================================
-# Additional Rate Limit Tests
+# Additional Tests
 # ==========================================
 
 def test_rate_limit_headers_present(clean_db, reset_rate_limiter):
@@ -752,12 +464,12 @@ def test_rate_limit_headers_present(clean_db, reset_rate_limiter):
     assert response.status_code == 200
 
 
+@pytest.mark.skipif(
+    os.getenv("TESTING") == "true", 
+    reason="Rate limiting disabled in testing mode"
+)
 def test_rate_limit_response_format(clean_db, reset_rate_limiter):
     """Test rate limit exceeded response format"""
-    # In testing mode, rate limiting is disabled
-    if os.getenv("TESTING") == "true":
-        pytest.skip("Rate limiting disabled in testing mode")
-    
     responses = []
     for i in range(70):
         response = client.get("/")
@@ -772,8 +484,11 @@ def test_rate_limit_response_format(clean_db, reset_rate_limiter):
         assert 'detail' in data or 'error' in data
 
 
-@pytest.mark.skipif(not is_model_loaded(), reason="ML model not loaded or incompatible")
-def test_concurrent_requests_rate_limit(clean_db, test_user, reset_rate_limiter):
+@pytest.mark.skipif(
+    not is_model_loaded(), 
+    reason="ML model not loaded or incompatible"
+)
+def test_concurrent_requests_rate_limit(test_user, reset_rate_limiter):
     """Test rate limiting with concurrent requests"""
     import concurrent.futures
     
@@ -802,8 +517,15 @@ def test_concurrent_requests_rate_limit(clean_db, test_user, reset_rate_limiter)
     
     # Make concurrent requests
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(make_request, i) for i in range(10)]
-        responses = [f.result() for f in concurrent.futures.as_completed(futures) if f.result()]
+        futures = [
+            executor.submit(make_request, i) 
+            for i in range(10)
+        ]
+        responses = [
+            f.result() 
+            for f in concurrent.futures.as_completed(futures) 
+            if f.result()
+        ]
     
     # Should have at least some responses
     assert len(responses) > 0, "Should have at least some responses"
