@@ -707,7 +707,6 @@ def test_rate_limit_headers_present(clean_db):
     
     # Check for rate limit headers (if implemented)
     # These headers are optional but recommended
-    expected_headers = ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset']
     
     # Just verify response is valid, headers are optional
     assert response.status_code in [200, 429]
