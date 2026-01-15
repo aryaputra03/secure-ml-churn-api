@@ -404,7 +404,7 @@ def reset_rate_limiter():
                     # Try to clear Redis storage
                     storage.storage.flushdb()
                 except:
-                    pass
+                    print("Error")
     
     yield
     
@@ -793,6 +793,6 @@ def cleanup(request):
         try:
             os.remove("test_rate_limit.db")
         except FileNotFoundError:
-            pass
+            print("Error")
     
     request.addfinalizer(remove_test_db)
