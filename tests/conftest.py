@@ -83,8 +83,8 @@ def setup_test_environment():
     print("\n" + "=" * 60)
     print("TEST ENVIRONMENT SETUP")
     print("=" * 60)
-    print(f"Testing mode: ENABLED")
-    print(f"Rate limiting: DISABLED")
+    print("Testing mode: ENABLED")
+    print("Rate limiting: DISABLED")
     print(f"Test password length: {len(TEST_PASSWORD)} chars (SAFE)")
     print("=" * 60 + "\n")
     
