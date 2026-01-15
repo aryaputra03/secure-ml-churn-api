@@ -403,8 +403,8 @@ def reset_rate_limiter():
                 try:
                     # Try to clear Redis storage
                     storage.storage.flushdb()
-                except:
-                    print("Error")
+                except Exception as e:
+                    print(f"Error: {e}")
     
     yield
     
