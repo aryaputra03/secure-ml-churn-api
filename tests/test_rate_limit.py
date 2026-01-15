@@ -388,7 +388,7 @@ def is_model_loaded():
             data = response.json()
             return data.get("model_loaded", False)
         return False
-    except:
+    except Exception:
         return False
 
 
@@ -420,7 +420,7 @@ def reset_rate_limiter():
             if hasattr(storage, 'storage') and storage.storage:
                 try:
                     storage.storage.flushdb()
-                except:
+                except Exception:
                     pass
     
     yield
