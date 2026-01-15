@@ -507,29 +507,26 @@
 CRUD Operations for Database
 
 Handles database operations for users, predictions, etc.
-FIXED: Password hashing consistency
+ULTIMATE FIX: Use bcrypt directly to avoid passlib backend detection bug
 """
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import Optional, List
 from datetime import datetime
-from passlib.context import CryptContext
+import bcrypt
 
 from src.api import schemas
 from src.utils import logger
 
-# Password hashing context - MUST be consistent across app
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # ==========================================
-# Password Utilities
+# Password Utilities - Direct bcrypt usage
 # ==========================================
 
 def get_password_hash(password: str) -> str:
     """
-    Hash a password using bcrypt
+    Hash a password using bcrypt directly
     
     Args:
         password: Plain text password
@@ -537,12 +534,28 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password
     """
-    return pwd_context.hash(password)
+    # Ensure password is bytes
+    if isinstance(password, str):
+        password_bytes = password.encode('utf-8')
+    else:
+        password_bytes = password
+    
+    # Bcrypt max 72 bytes - truncate if necessary
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        logger.warning("Password truncated to 72 bytes for bcrypt")
+    
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    
+    # Return as string
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
-    Verify a password against a hash
+    Verify a password against a hash using bcrypt directly
     
     Args:
         plain_password: Plain text password
@@ -552,7 +565,23 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         True if password matches
     """
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        # Ensure password is bytes
+        if isinstance(plain_password, str):
+            password_bytes = plain_password.encode('utf-8')
+        else:
+            password_bytes = plain_password
+        
+        # Truncate to 72 bytes if necessary
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Ensure hash is bytes
+        if isinstance(hashed_password, str):
+            hashed_password = hashed_password.encode('utf-8')
+        
+        # Verify
+        return bcrypt.checkpw(password_bytes, hashed_password)
+    
     except Exception as e:
         logger.error(f"Password verification error: {e}")
         return False
@@ -641,7 +670,7 @@ def create_user(
     Returns:
         Created user object
     """
-    # Hash the password
+    # Hash the password using bcrypt directly
     hashed_password = get_password_hash(password)
     
     # Create user object

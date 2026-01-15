@@ -135,12 +135,21 @@ def test_user(clean_db, reset_rate_limiter):
             db=db,
             username="testuser",
             email="test@example.com",
-            password=TEST_PASSWORD,  # SHORT password
+            password=TEST_PASSWORD,  # SHORT password: Test123!
             role="user"
         )
         db.commit()
         db.refresh(user)
+        
+        # Verify user was created
+        assert user is not None
+        assert user.username == "testuser"
+        
         return user
+    except Exception as e:
+        print(f"Error creating test user: {e}")
+        db.rollback()
+        raise
     finally:
         db.close()
 

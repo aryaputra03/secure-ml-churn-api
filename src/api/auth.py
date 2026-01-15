@@ -277,7 +277,7 @@
 Authentication & Authorization Module
 
 Implements JWT-based authentication with OAuth2 password flow.
-FINAL FIX - Uses bcrypt directly to avoid passlib backend detection issues
+ULTIMATE FIX: Use bcrypt directly to avoid passlib backend detection issues
 """
 
 from datetime import datetime, timedelta
@@ -288,6 +288,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import secrets
+
 from src.api.database import get_db
 from src.api import schemas
 from src.utils import logger
@@ -303,33 +304,10 @@ oauth2_scheme = OAuth2PasswordBearer(
     scheme_name="JWT"
 )
 
-# ==========================================
-# Password Utilities - Using bcrypt directly
-# ==========================================
 
-def _ensure_safe_password(password: str) -> bytes:
-    """
-    Ensure password is safe for bcrypt (max 72 bytes)
-    
-    Args:
-        password: Plain text password
-        
-    Returns:
-        Password bytes truncated to 72 bytes if necessary
-    """
-    if not isinstance(password, str):
-        password = str(password)
-    
-    password_bytes = password.encode('utf-8')
-    
-    # Bcrypt has a hard limit of 72 bytes
-    if len(password_bytes) > 72:
-        # Truncate to 72 bytes
-        password_bytes = password_bytes[:72]
-        logger.warning("Password truncated to 72 bytes for bcrypt")
-    
-    return password_bytes
-
+# ==========================================
+# Password Utilities - Direct bcrypt usage
+# ==========================================
 
 def get_password_hash(password: str) -> str:
     """
@@ -341,24 +319,23 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password string
     """
-    try:
-        # Ensure password is safe (max 72 bytes)
-        safe_password = _ensure_safe_password(password)
-        
-        # Generate salt and hash
-        salt = bcrypt.gensalt(rounds=12)
-        hashed = bcrypt.hashpw(safe_password, salt)
-        
-        # Return as string
-        return hashed.decode('utf-8')
+    # Ensure password is bytes
+    if isinstance(password, str):
+        password_bytes = password.encode('utf-8')
+    else:
+        password_bytes = password
     
-    except Exception as e:
-        logger.error(f"Password hashing failed: {e}")
-        # Fallback: use even shorter password
-        safe_password = password.encode('utf-8')[:60]
-        salt = bcrypt.gensalt(rounds=12)
-        hashed = bcrypt.hashpw(safe_password, salt)
-        return hashed.decode('utf-8')
+    # Bcrypt max 72 bytes - truncate if necessary
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        logger.warning("Password truncated to 72 bytes for bcrypt")
+    
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    
+    # Return as string
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -373,15 +350,22 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         True if password matches
     """
     try:
-        # Ensure password is safe
-        safe_password = _ensure_safe_password(plain_password)
+        # Ensure password is bytes
+        if isinstance(plain_password, str):
+            password_bytes = plain_password.encode('utf-8')
+        else:
+            password_bytes = plain_password
         
-        # Hash must be bytes for bcrypt
+        # Truncate to 72 bytes if necessary
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Ensure hash is bytes
         if isinstance(hashed_password, str):
             hashed_password = hashed_password.encode('utf-8')
         
         # Verify
-        return bcrypt.checkpw(safe_password, hashed_password)
+        return bcrypt.checkpw(password_bytes, hashed_password)
     
     except Exception as e:
         logger.error(f"Password verification failed: {e}")
@@ -492,30 +476,15 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[sch
 
     user = crud.get_user_by_username(db, username)
     if not user:
+        logger.info(f"User not found: {username}")
         return None
     
-    if not verify_password(password, user.hashed_password):
+    # Use verify_password from crud (which uses bcrypt directly)
+    if not crud.verify_password(password, user.hashed_password):
+        logger.info(f"Password verification failed for user: {username}")
         return None
     
     return user
-
-# def authenticate_user(db: Session, username: str, password: str):
-#     """
-#     Authenticate user
-    
-#     IMPORTANT: Must use crud.verify_password to ensure consistency
-#     """
-#     from src.api import crud
-    
-#     user = crud.get_user_by_username(db, username)
-#     if not user:
-#         return False
-    
-#     # Use crud.verify_password - NOT pwd_context.verify directly
-#     if not crud.verify_password(password, user.hashed_password):
-#         return False
-    
-#     return user
 
 
 def get_current_user(
