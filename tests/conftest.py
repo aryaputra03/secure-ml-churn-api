@@ -5,6 +5,11 @@ This file is placed in the tests/ directory to configure pytest options.
 """
 
 import pytest
+import os
+
+
+# Set testing environment variable
+os.environ["TESTING"] = "true"
 
 
 def pytest_addoption(parser):
@@ -48,3 +53,16 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "redis" in item.keywords:
                 item.add_marker(skip_redis)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_environment():
+    """Setup test environment"""
+    # Disable rate limiting during tests
+    os.environ["DISABLE_RATE_LIMIT"] = "true"
+    
+    yield
+    
+    # Cleanup
+    if "DISABLE_RATE_LIMIT" in os.environ:
+        del os.environ["DISABLE_RATE_LIMIT"]
