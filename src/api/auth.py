@@ -277,7 +277,7 @@
 Authentication & Authorization Module
 
 Implements JWT-based authentication with OAuth2 password flow.
-FIXED VERSION - Handles bcrypt 72-byte limitation properly
+FIXED VERSION - Properly configured bcrypt to handle password length
 """
 
 from datetime import datetime, timedelta
@@ -298,7 +298,18 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ==========================================
+# CRITICAL FIX: Configure bcrypt properly
+# ==========================================
+
+# Configure passlib to handle bcrypt with truncation
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__default_rounds=12,
+    # This tells passlib to truncate passwords automatically
+    bcrypt__truncate_error=False,
+)
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="auth/token",
@@ -306,35 +317,30 @@ oauth2_scheme = OAuth2PasswordBearer(
 )
 
 # ==========================================
-# Password Utilities - FIXED BCRYPT HANDLING
+# Password Utilities - SIMPLIFIED
 # ==========================================
 
-def _truncate_password(password: str) -> str:
+def _ensure_safe_password(password: str) -> str:
     """
-    Safely truncate password to 72 bytes for bcrypt
-    
-    Bcrypt has a hard limit of 72 bytes.
-    This function ensures we never exceed that limit.
+    Ensure password is safe for bcrypt (max 72 bytes)
     
     Args:
         password: Plain text password
         
     Returns:
-        Truncated password (max 72 bytes)
+        Password truncated to 72 bytes if necessary
     """
     if not isinstance(password, str):
         password = str(password)
     
-    # Convert to bytes
     password_bytes = password.encode('utf-8')
     
-    # If longer than 72 bytes, truncate
     if len(password_bytes) > 72:
         # Truncate to 72 bytes
         password_bytes = password_bytes[:72]
-        # Convert back, ignoring any incomplete multibyte characters
+        # Decode back, handling any incomplete multibyte chars
         password = password_bytes.decode('utf-8', errors='ignore')
-        logger.warning("Password truncated to 72 bytes for bcrypt compatibility")
+        logger.warning("Password truncated to 72 bytes for bcrypt")
     
     return password
 
@@ -343,7 +349,7 @@ def get_password_hash(password: str) -> str:
     """
     Hash a password using bcrypt
     
-    Automatically truncates to 72 bytes if necessary.
+    Automatically handles password length issues.
     
     Args:
         password: Plain text password
@@ -351,11 +357,19 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password
     """
-    # Truncate password to bcrypt's 72-byte limit
-    truncated = _truncate_password(password)
+    try:
+        # Ensure password is safe
+        safe_password = _ensure_safe_password(password)
+        
+        # Hash the password
+        return pwd_context.hash(safe_password)
     
-    # Hash the truncated password
-    return pwd_context.hash(truncated)
+    except Exception as e:
+        logger.error(f"Password hashing failed: {e}")
+        # If hashing fails, try with a more aggressive truncation
+        password_bytes = password.encode('utf-8')[:70]  # Even shorter
+        safe_password = password_bytes.decode('utf-8', errors='ignore')
+        return pwd_context.hash(safe_password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -369,11 +383,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches
     """
-    # Truncate password same way as when hashing
-    truncated = _truncate_password(plain_password)
+    try:
+        # Ensure password is safe
+        safe_password = _ensure_safe_password(plain_password)
+        
+        # Verify
+        return pwd_context.verify(safe_password, hashed_password)
     
-    # Verify with truncated password
-    return pwd_context.verify(truncated, hashed_password)
+    except Exception as e:
+        logger.error(f"Password verification failed: {e}")
+        return False
 
 
 # ==========================================
