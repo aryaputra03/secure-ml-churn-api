@@ -509,7 +509,6 @@ FastAPI Main Application
 REST API for customer churn prediction with database logging.
 Updated to use modern FastAPI lifespan events.
 """
-
 from contextlib import asynccontextmanager
 from fastapi import (
     FastAPI, HTTPException, Depends, BackgroundTasks, 
@@ -551,7 +550,7 @@ from src.api.ml_service import MLService
 from src.utils import logger
 from sqlalchemy.orm import Session
 
-
+print("test")
 # ==========================================
 # Lifespan Event Handler
 # ==========================================
