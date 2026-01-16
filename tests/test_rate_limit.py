@@ -163,12 +163,21 @@ def admin_user(clean_db, reset_rate_limiter):
             db=db,
             username="admin",
             email="admin@example.com",
-            password=ADMIN_PASSWORD,  # SHORT password
+            password=ADMIN_PASSWORD,  # SHORT password: Admin123!
             role="admin"
         )
         db.commit()
         db.refresh(admin)
+        
+        # Verify admin was created
+        assert admin is not None
+        assert admin.username == "admin"
+        
         return admin
+    except Exception as e:
+        print(f"Error creating admin user: {e}")
+        db.rollback()
+        raise
     finally:
         db.close()
 
